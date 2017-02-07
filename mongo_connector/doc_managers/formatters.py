@@ -1,4 +1,6 @@
 import base64
+#import calendar
+import datetime
 import re
 
 from uuid import UUID
@@ -50,6 +52,8 @@ class DefaultDocumentFormatter(DocumentFormatter):
     """Basic DocumentFormatter that preserves numbers, base64-encodes binary,
     and stringifies everything else.
     """
+    _reDatetime = re.compile(r'(?P<datetime>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})(?P<secparts>.\d{6})?')
+    _solrUtcDateFmt = '%Y-%m-%dT%H:%M:%S.%fZ'
 
     def transform_value(self, value):
         # This is largely taken from bson.json_util.default, though not the same
@@ -83,6 +87,22 @@ class DefaultDocumentFormatter(DocumentFormatter):
             return value.hex
         elif isinstance(value, (int, long, float)):
             return value
+        elif isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+            # reset date to UTC
+            if value.utcoffset() is not None:
+                value = value - value.utcoffset()
+            return value
+            #return value.strftime(_solrUtcDateFmt)
+            """
+            millis = int(calendar.timegm(obj.timetuple()) * 1000 +
+                        obj.microsecond / 1000)
+            return {"$date": millis}
+            """
+        elif DefaultDocumentFormatter._reDatetime.match(str(value)) != None:
+        #isinstance(value, str) and
+            m = DefaultDocumentFormatter._reDatetime.match(str(value))
+            return datetime.datetime.strptime(value, '%Y-%m-%d %H:%M:%S' + ('' if m.group('secparts') == None else '.%f'))
+            #.strftime(_solrUtcDateFmt)
         # Default
         return str(value)
 
@@ -151,3 +171,10 @@ class DocumentFlattener(DefaultDocumentFormatter):
                         else:
                             yield "%s.%s" % (path_string, new_k), new_v
         return dict(flatten(document, []))
+
+        
+#class DynamicSolrDocFormatter(DocumentFlattener):
+#    def transform_element(self, key, value):
+#        transformed = super(DynamicSolrDocFormatter, self).transform_element(self, key, value);
+#        
+#        return transformed

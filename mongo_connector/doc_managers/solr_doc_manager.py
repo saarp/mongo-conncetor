@@ -21,7 +21,9 @@ To extend this to other systems, simply implement the exact same class and
 replace the method definitions with API calls for the desired backend.
 """
 import re
+import datetime
 import json
+import logging
 
 from pysolr import Solr, SolrError
 
@@ -134,11 +136,35 @@ class DocManager(DocManagerBase):
         # schema or match one of the dynamic field patterns, if
         # we were able to retrieve the schema
         if len(self.field_list) + len(self._dynamic_field_regexes) > 0:
-            def include_field(field):
-                return field in self.field_list or any(
+            def dynamic_field_suffix(val):
+                if type(val) is int:
+                   return "_i"
+                elif type(val) is float:
+                   return "_f"
+                elif (type(val) is datetime.datetime or type(val) is datetime.date):
+                # or (key.rfind("_date") > 0 and self._reDatetime.match(val) != None)):
+                   return "_tdt"
+                elif type(val) is dict or type(val) is str:
+                   return "_t"
+                return ""
+            def include_field_static(field):
+                return field in self.field_list 
+            def include_field_dynamic(field):
+                return any(
                     regex.match(field) for regex in self._dynamic_field_regexes
                 )
-            return dict((k, v) for k, v in flat_doc.items() if include_field(k))
+            
+            statFields = dict((k, v) for k, v in flat_doc.items() if include_field_static(k))
+            dynFields = dict()
+            for k,v in flat_doc.items():
+                ext = dynamic_field_suffix(v)
+                newField = k + ('' if k.endswith(ext) else ext)
+                if not k in statFields and include_field_dynamic(newField):
+                    dynFields[newField] = v
+            # overlay static fields over dynamic fields
+            #print('Doc {0} found {1} static and {2} dynamic fields.'.format(doc[self.unique_key], len(statFields), len(dynFields)))
+            dynFields.update(statFields)
+            return dynFields
         return flat_doc
 
     def stop(self):
@@ -218,16 +244,36 @@ class DocManager(DocManagerBase):
             }
         else:
             add_kwargs = {"commit": False}
+        
+        # Not supported by pysolr yet.
+        # add_kwargs["overwrite"] = True
 
         cleaned = (self._clean_doc(d) for d in docs)
         if self.chunk_size > 0:
-            batch = list(next(cleaned) for i in range(self.chunk_size))
+            batch = list()
+            for i in range(self.chunk_size):
+                n = next(cleaned)
+                # Exclude results where cleaning returned no document
+                if (n is not None):
+                   batch.append(n)
+
+            print('Batch contains {0} docs.'.format(len(batch))) 
+            firstDoc = None
+            if len(batch) > 0:
+                firstDoc = batch[0]
+            logging.info("First doc of " + str(len(batch)) + " - " + str(firstDoc))
             while batch:
-                self.solr.add(batch, **add_kwargs)
-                batch = list(next(cleaned)
+                try:
+                    self.solr.add(batch, **add_kwargs)
+                    batch = list(next(cleaned)
                              for i in range(self.chunk_size))
+                except:
+                    print('Failed loading batch of {0} documents - {1}'.format(len(batch), sys.exc_info()[0]))
         else:
-            self.solr.add(cleaned, **add_kwargs)
+            try:
+                self.solr.add(cleaned, **add_kwargs)
+            except:
+                print('Failed loading document {0}: {1} - {2}'.format(self.unique_key, doc[self.unique_key], sys.exc_info()[0]))
 
     @wrap_exceptions
     def remove(self, doc):

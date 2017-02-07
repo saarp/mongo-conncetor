@@ -214,6 +214,8 @@ class OplogThread(threading.Thread):
                                     upsert_inc += 1
                                 # Update
                                 elif operation == 'u':
+                                    #logging.debug('**** UPDATE ****')
+                                    #logging.debug("update -- o2:" + str(entry['o2']) + ' o: ' + str(entry['o']))
                                     doc = {"_id": entry['o2']['_id'],
                                            "_ts": util.bson_ts_to_long(
                                                entry['ts']),
